@@ -2186,9 +2186,15 @@ def parse_args(argv):
                     'With --platform mac-app: the Mac app\'s archive, by default for this Mac\'s GPU (none: the app builds the bases on its first start)')
     ap.add_argument('--show-fps', action=argparse.BooleanOptionalAction, help='show the game\'s frame rate on the iPhone, frames on screen per second at the top left (default: the SHOW_FPS setting, on)')
     ap.add_argument('--motion', action=argparse.BooleanOptionalAction, help='pass a gyro controller\'s motion (on iOS also the phone\'s own) to games that read it; --no-motion builds with DM_MOTION=0, for when motion misbehaves (default: the MOTION setting, on)')
-    ap.add_argument('--older-iphone', nargs='?', const='128', choices=OLDER_IPHONE_SIZES, metavar='TEXTURE_SIZE',
-                    help='an iPhone before the iPhone 15 Pro, which decodes the games\' textures on the CPU: builds in the switches that fit a game in its memory. Alone: a 4 GB iPhone (texture size 128); '
-                         'a larger size (256, 512, 1024) or full keeps more texture detail for a 6 GB iPhone (untested) (default: the OLDER_IPHONE setting, none)')
+    older = ap.add_mutually_exclusive_group()
+    older.add_argument('--older-iphone', nargs='?', const='128', choices=OLDER_IPHONE_SIZES, metavar='TEXTURE_SIZE',
+                       help='an iPhone before the iPhone 15 Pro, which decodes the games\' textures on the CPU: builds in the switches that fit a game in its memory. Alone: a 4 GB iPhone (texture size 128); '
+                            'a larger size (256, 512, 1024) or full keeps more texture detail for a 6 GB iPhone (untested) (default: the OLDER_IPHONE setting, none)')
+    older.add_argument('--4gb', dest='older_iphone', action='store_const', const='128', help='the phone has 4 GB of memory (iPhone 12, 12 mini, 13, 13 mini, SE 3rd generation): --older-iphone 128, tested')
+    older.add_argument('--6gb', dest='older_iphone', action='store_const', const='512',
+                       help='the phone has 6 GB (iPhone 12 Pro, 13 Pro, 14, 14 Plus, 14 Pro, 15, 15 Plus and their Max models): --older-iphone 512, untested (256 if the game closes while loading)')
+    older.add_argument('--8gb', dest='older_iphone', action='store_const', const='',
+                       help='the device has 8 GB or more (iPhone 15 Pro or newer, an iPad with an M1 chip or newer): it reads the games\' textures itself, so nothing is built in')
     ap.add_argument('--survey-only', action='store_true', help='a game with no profile: only the survey, no provisional profile and no IPA')
     ap.add_argument('--allow-damaged', action='store_true', help='a damaged NSP (files failing the NCA hash check): write them as read and go on instead of stopping')
     ap.add_argument('--allow-shader-regressions', action='store_true', help='shaders that translated in the game\'s previous build and fail with the current translation chain: '
@@ -2477,6 +2483,7 @@ def main(args=None):
     env_file = build_env_file(work, args.env_file or DM_ENV_FILE, motion, older)
     if not motion: say('motion (gyro): off, DM_MOTION=0 is built in (on the iPhone, DM_MOTION=1 in the app\'s Documents/env.txt turns it back on)')
     if older: say(f'older iPhone: texture size {older}, {" ".join(f"{k}={v}" for k, v in older_iphone_pairs(older).items())} built in (a line in the app\'s Documents/env.txt overrides one)')
+    elif args.older_iphone == '': say('8 GB or more: the device reads the games\' textures itself, nothing built in for an older iPhone')
     if mac_pack:   # a Mac app: the Mac host, then the app packed from it and the build's files
         host, font = mac_host(py, repo, work, env, logs, g)
         if not icon: say('[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the app\'s icon will be blank')

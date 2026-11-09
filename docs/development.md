@@ -337,8 +337,9 @@ python3 scripts/build_ipa_from_nsp.py ~/Games/BreathOfTheWild -k ~/keys/prod.key
 # a diagnostic build with environment switches baked in (one KEY=VALUE per line)
 python3 scripts/build_ipa_from_nsp.py ~/Games/MarioWonder -k ~/keys/prod.keys --env-file diag_env.txt
 
-# an iPhone before the iPhone 15 Pro: the switches that fit a game in a 4 GB iPhone's memory built in (older_iphone_pairs, texture size 128); a size after it (256, 512, 1024, full) keeps more texture detail for a 6 GB one
-python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --older-iphone
+# an iPhone before the iPhone 15 Pro: the switches that fit a game in a 4 GB iPhone's memory built in (older_iphone_pairs, texture size 128); --6gb (512) or --older-iphone <size> (64 to 1024, full)
+# keeps more texture detail for a 6 GB one; --8gb builds in nothing
+python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --4gb
 
 # a damaged NSP (files failing the NCA's hash check) stops the build after listing them; this packs those files as read
 python3 scripts/build_ipa_from_nsp.py ~/Games/MarioGalaxy -k ~/keys/prod.keys --allow-damaged

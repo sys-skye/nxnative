@@ -10,20 +10,21 @@ This is a fork of [nxnative](https://github.com/seedds/nxnative) for iPhones who
 
 **Tested:** Mario Kart 8 Deluxe 3.0.5 on an iPhone 13 mini (4 GB) with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
 
-**How:** follow [Build from the command line](#build-from-the-command-line) below, and add `--older-iphone` at the end of the build command. On its own it builds for a 4 GB iPhone:
+**How:** follow [Build from the command line](#build-from-the-command-line) below, and add your iPhone's memory to the build command, for example `--4gb`:
 
 ```
-python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --older-iphone
+python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --4gb
 ```
-
-A number after it sets the texture size, the largest a texture is kept, in pixels. Bigger is sharper and needs more memory:
 
 | Your iPhone | Add | |
 |---|---|---|
-| 4 GB: iPhone 12, 12 mini, 13, 13 mini, SE (3rd generation) | `--older-iphone` | tested (texture size 128) |
-| 6 GB: iPhone 12 Pro / Pro Max, 13 Pro / Pro Max, 14, 14 Plus, 14 Pro / Pro Max, 15, 15 Plus | `--older-iphone 512` | untested: if the game closes while loading, try `256` |
+| iPhone 12, 12 mini, 13, 13 mini, SE (3rd generation) | `--4gb` | tested |
+| iPhone 12 Pro / Pro Max, 13 Pro / Pro Max, 14, 14 Plus, 14 Pro / Pro Max, 15, 15 Plus | `--6gb` | untested: if the game closes while loading, use `--older-iphone 256` instead |
+| iPhone 15 Pro or newer, iPad with an M1 chip or newer | `--8gb`, or nothing | reads the textures itself |
 
-The sizes are `64`, `128`, `256`, `512`, `1024` and `full` (no limit). Then [install](#install) the IPA as usual, with **Increased Memory Limit** turned on: on these iPhones the game does not fit without it.
+Then [install](#install) the IPA as usual, with **Increased Memory Limit** turned on: on these iPhones the game does not fit without it.
+
+**Choosing the texture size yourself:** `--older-iphone <size>` sets the largest a texture is kept, in pixels: `64`, `128`, `256`, `512`, `1024` or `full` (no limit). Bigger is sharper and needs more memory. `--4gb` is `128`, `--6gb` is `512`.
 
 **What to expect:**
 
