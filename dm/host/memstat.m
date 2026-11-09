@@ -1,4 +1,4 @@
-// Memory accounting: when DM_MEMSTAT=<tsv path> is set, one line is logged per second (common to Mac / iOS).
+// Memory accounting: when DM_MEMSTAT=<tsv path> is set, one line is logged per second, or every DM_MEMSTAT_MS (common to Mac / iOS).
 //   Totals: phys_footprint (task_info TASK_VM_INFO, which the iOS memory limit is based on), os_proc_available_memory (iOS only), Metal currentAllocatedSize
 //   Breakdown: walk this process's VM regions (vm_region_recurse_64, VM_REGION_SUBMAP_INFO_64), classify by region, and for each class record
 //         virtual = address space size (reserved-only counts too), resident = pages_resident, charged = dirty pages + compressed/swapped-out pages, deduplicated by VM object (≈ the part that goes into phys_footprint)
@@ -80,7 +80,7 @@ static void sample(FILE *f, double t, id<MTLDevice> dev) {
         a += sz; continue;
     }
     uint64_t sum = 0; for (int c = 0; c < NC; c++) sum += bill[c];
-    fprintf(f, "%.0f\t%llu\t%llu\t%llu\t%llu\t%llu\t%lld\t%lld", t, fp >> 20, avail >> 20, (unsigned long long)(dev.currentAllocatedSize >> 20),
+    fprintf(f, "%.1f\t%llu\t%llu\t%llu\t%llu\t%llu\t%lld\t%lld", t, fp >> 20, avail >> 20, (unsigned long long)(dev.currentAllocatedSize >> 20),
             vi.internal >> 20, vi.compressed >> 20, (vi.ledger_tag_graphics_footprint + vi.ledger_tag_graphics_footprint_compressed) >> 20,
             (long long)(vi.limit_bytes_remaining >> 20));
     for (int c = 0; c < NC; c++) fprintf(f, "\t%llu/%llu/%llu", virt[c] >> 20, res[c] >> 20, bill[c] >> 20);
@@ -97,8 +97,10 @@ static void *memstat_thread(void *p) {
     id<MTLDevice> dev = MTLCreateSystemDefaultDevice();   // The same device object as the graphics backend (the system default device singleton)
     uint64_t t0 = now_ns();
     const char *ds = getenv("DM_MEMSTAT_DUMP"); int dump_at = ds ? atoi(ds) : -1;
+    // DM_MEMSTAT_MS=<ms> between lines (default 1000): a race load on a 4 GB iPhone went from the last line to the kill within one second, so a second's lines never showed what grew
+    const char *ms = getenv("DM_MEMSTAT_MS"); unsigned iv = ms && atoi(ms) >= 20 ? (unsigned)atoi(ms) : 1000;
     char dp[1100]; snprintf(dp, sizeof dp, "%s.regions", (const char *)p);
-    for (int sec = 0;; sec++) { sample(f, (now_ns() - t0) / 1e9, dev); if (sec == dump_at) dump_regions(dp); sleep(1); }
+    for (uint64_t n = 0;; n++) { sample(f, (now_ns() - t0) / 1e9, dev); if (dump_at >= 0 && n == (uint64_t)dump_at * 1000 / iv) dump_regions(dp); usleep(iv * 1000); }
     return NULL;
 }
 

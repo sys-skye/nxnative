@@ -73,8 +73,11 @@ static void stamp_page(range_t *r, uintptr_t p) {
     // must invalidate that cached clock, as the page stays writable until the next upload protects it again.
     atomic_fetch_add(&g_now, 1);
 }
+static _Atomic int g_discarded;   // nvn_dirty_discard has run: a page made writable may be reusable, and is taken back first
+static void reuse_pages(uintptr_t a, size_t len) { if (atomic_load_explicit(&g_discarded, memory_order_relaxed)) (void)madvise((void *)a, len, MADV_FREE_REUSE); }   // a system call: fine in the fault path
 static void unprotect_page(range_t *r, uintptr_t p) {   // The caller has already changed the state from PROT to BUSY
     mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
+    reuse_pages(r->base + (p << g_shift), g_pg);
     stamp_page(r, p);
     atomic_store(&r->state[p], PG_NONE);
 }
@@ -105,6 +108,7 @@ static void release_pages(range_t *r, uintptr_t p, uintptr_t q, _Atomic uint64_t
         if (took) { if (!open) { run = i; open = 1; } continue; }
         if (open) {
             mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ | PROT_WRITE);
+            reuse_pages(r->base + (run << g_shift), (i - run) << g_shift);
             for (uintptr_t k = run; k < i; k++) { stamp_page(r, k); atomic_store(&r->state[k], PG_NONE); }
             if (count) atomic_fetch_add(count, i - run);
             open = 0;
@@ -196,6 +200,33 @@ void nvn_dirty_protect(const void *addr, size_t len) {
         if (!took && i <= q && st == PG_BUSY && busy_wait(r, i)) i--;   // this page again
     }
     pthread_mutex_unlock(&g_slot_mu);
+}
+// Gives the whole protected pages inside [addr, addr+len) back to the system: their content is lost. They stay mapped and read-only, a later write faults as usual, and reads see zeros or the old bytes.
+// The kernel only takes an ordinary read-write mapping as reusable (vm_map_entry_is_reusable), so each run is writable for that moment, its pages BUSY: a guest write landing in that moment is lost with the page.
+// Pages written since the protection (state NONE) keep their content. Returns the bytes given back; *failed = bytes the kernel refused (pages another mapping or the GPU holds)
+size_t nvn_dirty_discard(const void *addr, size_t len, size_t *failed) {
+    size_t done = 0; *failed = 0;
+    uintptr_t a = ((uintptr_t)addr + g_pg - 1) & ~(g_pg - 1), e = ((uintptr_t)addr + len) & ~(g_pg - 1);
+    if (!len || !g_pg || e <= a) return 0;
+    atomic_store(&g_discarded, 1);
+    pthread_mutex_lock(&g_slot_mu);
+    range_t *r = find_span(a, e - a);
+    if (!r) { pthread_mutex_unlock(&g_slot_mu); return 0; }
+    uintptr_t p = (a - r->base) >> g_shift, q = (e - 1 - r->base) >> g_shift, run = 0; int open = 0;
+    for (uintptr_t i = p; i <= q + 1; i++) {
+        uint8_t st = PG_PROT; int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
+        if (took && !open) { run = i; open = 1; }
+        if (!took && open) {
+            uintptr_t ra = r->base + (run << g_shift); size_t rl = (i - run) << g_shift;
+            mp(ra, rl, PROT_READ | PROT_WRITE);
+            if (madvise((void *)ra, rl, MADV_FREE_REUSABLE)) *failed += rl; else done += rl;
+            mp(ra, rl, PROT_READ);
+            for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT);
+            open = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_slot_mu);
+    return done;
 }
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 int nvn_dirty_since_span(const void *span, const void *addr, size_t len, uint64_t stamp) {

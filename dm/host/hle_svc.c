@@ -39,6 +39,91 @@ int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_
 
 static void *alias_windows_thread(void *arg);
 static void *regions_thread(void *arg);
+// DM_ZERO_PAGES=<seconds>: heap pages holding only zeros go back to the system at that interval. Games clear their heap at boot: Mario Kart 8 Deluxe 3.0.5 has touched 1,482 MiB of its heap
+// 30 s in, 898 MiB of it still all zeros (820 MiB in a race), and iOS's memory limit charges those like any others. A pass first finds runs of such pages while the game runs, a chunk at a time
+// under g_map_lock (no SetHeapSize takes a page's access away while it is read). Then, a batch of at most ZP_BATCH bytes of those runs at a time, it stops every other thread, reads each page
+// again, and replaces the runs still blank with new zero-fill mappings: a store already made is visible once its thread has stopped, so a later read or write sees what it would have seen.
+// Stopping every thread for the whole scan held the frame and the audio up for 60 to 120 ms every pass on an iPhone 13 mini (an 80 ms frame and two or three audio underruns every 10 s).
+// A memory pool's pages stay: Metal's no-copy buffer holds their physical pages, and the GPU would go on using those. The bit is set before the buffer is made, so a pass sees it or runs before the
+// wrap, which then takes the new mapping. While the other threads are stopped the pass takes no lock but its own g_map_lock and calls no malloc, since a stopped thread may hold them
+enum { PINNED_WORDS = (8ull << 30 >> 14) / 64, ZP_MAX_THREADS = 1024, ZP_RUNS = 16384, ZP_BATCH = 16 << 20 };
+static pthread_mutex_t g_map_lock;   // defined with the mapping table below
+static _Atomic uint64_t g_pinned[PINNED_WORDS];   // per heap page, from dm_guest_pinned
+void dm_guest_pinned(const void *mem, size_t size) {
+    uintptr_t pg = (uintptr_t)getpagesize(), h = (uintptr_t)g_heap, a = (uintptr_t)mem & ~(pg - 1), b = ((uintptr_t)mem + size + pg - 1) & ~(pg - 1);
+    for (; a < b; a += pg) if (a >= h && a - h < g_heap_cap && (a - h) / pg / 64 < PINNED_WORDS) atomic_fetch_or(&g_pinned[(a - h) / pg / 64], 1ull << ((a - h) / pg % 64));
+}
+static int zp_pinned(uintptr_t p, size_t pg) {
+    size_t pi = (p - (uintptr_t)g_heap) / pg, w = pi / 64;
+    return w >= PINNED_WORDS || (atomic_load_explicit(&g_pinned[w], memory_order_relaxed) >> (pi % 64) & 1);
+}
+static int zp_blank(uintptr_t p, size_t pg) { const uint64_t *q = (const uint64_t *)p; size_t k = 0, n = pg / 8; while (k < n && !q[k]) k++; return k == n; }
+static unsigned zp_stop(thread_act_t *th, thread_act_t self, int *full) {   // suspends every other thread into th; *full when they could not all be held
+    unsigned ns = 0;
+    for (;;) {   // again until a listing shows no new thread: only a running thread can start one
+        thread_act_array_t l; mach_msg_type_number_t n = 0; int fresh = 0;
+        if (task_threads(mach_task_self(), &l, &n) != KERN_SUCCESS) { *full = 1; break; }
+        for (mach_msg_type_number_t i = 0; i < n; i++) {
+            int seen = l[i] == self; for (unsigned k = 0; !seen && k < ns; k++) seen = th[k] == l[i];
+            if (seen) { mach_port_deallocate(mach_task_self(), l[i]); continue; }
+            if (ns == ZP_MAX_THREADS) { *full = 1; mach_port_deallocate(mach_task_self(), l[i]); continue; }
+            thread_suspend(l[i]); th[ns++] = l[i]; fresh = 1;
+        }
+        vm_deallocate(mach_task_self(), (vm_address_t)l, n * sizeof *l);
+        if (!fresh || *full) break;
+    }
+    return ns;
+}
+static void zero_pages_pass(int compressed_too) {
+    static struct { uintptr_t lo, hi; } run[ZP_RUNS]; static thread_act_t th[ZP_MAX_THREADS]; static char vec[(64u << 20) >> 14];
+    uint64_t t0 = now_ns(), found = 0, zero = 0, failed = 0, pinned = 0; double stop_max = 0, stop_all = 0; size_t pg = (size_t)getpagesize(); int nr = 0, stops = 0, full = 0;
+    uintptr_t h = (uintptr_t)g_heap; vm_address_t a = h;
+    for (;;) {   // the runs, with every thread running, one chunk of a region per hold of the lock
+        pthread_mutex_lock(&g_map_lock);
+        uintptr_t end = h + atomic_load(&g_heap_cur); vm_address_t r = a;
+        vm_size_t sz = 0; vm_region_basic_info_data_64_t vi; mach_msg_type_number_t cnt = VM_REGION_BASIC_INFO_COUNT_64; mach_port_t obj = MACH_PORT_NULL;
+        if (nr == ZP_RUNS || a >= end || vm_region_64(mach_task_self(), &r, &sz, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&vi, &cnt, &obj) != KERN_SUCCESS || r >= end) { pthread_mutex_unlock(&g_map_lock); break; }
+        uintptr_t p = r > a ? r : a, re = r + sz < end ? r + sz : end, ce = re - p < sizeof vec * pg ? re : p + sizeof vec * pg;
+        if ((vi.protection & (VM_PROT_READ | VM_PROT_WRITE)) == (VM_PROT_READ | VM_PROT_WRITE) && !mincore((void *)p, ce - p, vec))
+            for (size_t i = 0; p + i * pg < ce && nr < ZP_RUNS; i++) {
+                uintptr_t q = p + i * pg;
+                if (!(vec[i] & (MINCORE_INCORE | (compressed_too ? MINCORE_PAGED_OUT : 0)))) continue;
+                if (zp_pinned(q, pg)) { pinned++; continue; }
+                if (!zp_blank(q, pg)) continue;
+                found++;
+                if (nr && run[nr - 1].hi == q) run[nr - 1].hi = q + pg;
+                else { run[nr].lo = q; run[nr].hi = q + pg; nr++; }
+            }
+        a = ce;
+        pthread_mutex_unlock(&g_map_lock);
+    }
+    for (int i = 0; i < nr && !full; ) {   // a batch of the runs with every other thread stopped: each page read again, the spans still blank replaced
+        pthread_mutex_lock(&g_map_lock);
+        thread_act_t self = mach_thread_self(); uint64_t s0 = now_ns(), bytes = 0;
+        unsigned ns = zp_stop(th, self, &full);
+        uintptr_t end = h + atomic_load(&g_heap_cur);
+        for (; !full && i < nr && bytes < ZP_BATCH; i++) {
+            uintptr_t span = 0, p = run[i].lo;
+            for (; p <= run[i].hi; p += pg) {
+                if (p < run[i].hi && p < end && !zp_pinned(p, pg) && zp_blank(p, pg)) { if (!span) span = p; continue; }
+                if (span) { if (mmap((void *)span, p - span, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) failed++; else zero += (p - span) / pg; span = 0; }
+            }
+            bytes += run[i].hi - run[i].lo;
+        }
+        for (unsigned k = 0; k < ns; k++) { thread_resume(th[k]); mach_port_deallocate(mach_task_self(), th[k]); }
+        mach_port_deallocate(mach_task_self(), self);
+        pthread_mutex_unlock(&g_map_lock);
+        double ms = (now_ns() - s0) / 1e6; stops++; stop_all += ms; if (ms > stop_max) stop_max = ms;
+        if (i < nr) usleep(20000);   // the game runs between batches
+    }
+    if (full) LOG("[RED] blank heap pages: more than %d threads, or they could not be listed: stopped giving back", ZP_MAX_THREADS);
+    LOG("[mem] blank heap pages: %llu MiB given back of %llu MiB found (%llu refused), %llu MiB of pool pages left; %d stops of every other thread, longest %.1f ms, %.1f ms in all; pass %.0f ms",
+        zero * pg >> 20, found * pg >> 20, failed, pinned * pg >> 20, stops, stop_max, stop_all, (now_ns() - t0) / 1e6);
+}
+static void *zero_pages_thread(void *arg) {
+    for (int pass = 0;; pass++) { sleep((unsigned)(uintptr_t)arg); zero_pages_pass(pass == 0); }   // after the first pass a page in the compressor is left there: reading it back to look costs more than a blank page
+    return NULL;
+}
 static void mem_init_once(void) {
     size_t pg = (size_t)getpagesize();
     if (RESERVE < 0x10000000 || DM_GAME_MEM_ALIAS > RESERVE - 0x10000000 ||
@@ -68,6 +153,8 @@ static void mem_init_once(void) {
     if (aw && atoi(aw) > 0) { pthread_t th; if (!pthread_create(&th, NULL, alias_windows_thread, (void *)(uintptr_t)atoi(aw))) pthread_detach(th); }
     const char *rf = getenv("DM_REGIONS");
     if (rf && *rf) { pthread_t th; if (!pthread_create(&th, NULL, regions_thread, (void *)rf)) pthread_detach(th); }
+    const char *zp = getenv("DM_ZERO_PAGES");
+    if (zp && atoi(zp) > 0) { pthread_t th; if (!pthread_create(&th, NULL, zero_pages_thread, (void *)(uintptr_t)atoi(zp))) pthread_detach(th); }
 }
 static void mem_init(void) {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
