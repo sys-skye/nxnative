@@ -17,7 +17,7 @@ python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --4
 ```
 
 | Your iPhone | Add | |
-|---|---|---|
+|---|---|
 | iPhone 12, 12 mini, 13, 13 mini, SE (3rd generation) | `--4gb` | tested |
 | iPhone 12 Pro / Pro Max, 13 Pro / Pro Max, 14, 14 Plus, 14 Pro / Pro Max, 15, 15 Plus | `--6gb` | untested: if the game closes while loading, use `--older-iphone 256` instead |
 
