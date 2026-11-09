@@ -61,6 +61,8 @@ PSO_GPUS = ''                           # NVN games: GPU architectures the app g
                                         #   PLATFORM 'mac-app': the Mac app's archive (Resources/pso), empty = this Mac's GPU (e.g. 'g14s' for an M2 Max), 'none' = the app builds its bases on its first start
 SHOW_FPS = True                         # True shows the game's frame rate on the iPhone (frames on screen per second, top left); DM_SHOW_FPS=0 / 1 in the app's Documents/env.txt changes it without a rebuild
 MOTION = True                           # True passes a gyro controller's motion (on iOS also the phone's own) to games that read it; False builds with DM_MOTION=0, for when motion misbehaves (DM_MOTION=1 in the app's Documents/env.txt turns it back on without a rebuild)
+OLDER_IPHONE = ''                       # an iPhone before the iPhone 15 Pro, which decodes the games' BC textures on the CPU at 2 to 8 times their size: '128' builds in the switches that fit a 4 GB iPhone
+                                        #   (older_iphone_pairs); '256', '512', '1024' or 'full' keep more texture detail for a 6 GB one (untested); empty = none
 SURVEY_ONLY = False                     # a game with no profile in dm/games: only write the survey, no provisional profile and no IPA
 PROFILE_OUT = ''                        # where a provisional profile goes (empty = <build folder>/profile, i.e. <NSP folder>/<title ID>_build/profile unless WORK_DIR is set; the profile is <this>/<title ID>/)
 ALLOW_DAMAGED = False                   # a damaged NSP (files failing the NCA's hash check: an incomplete copy or a broken download) stops the build; True writes those files as read and goes on
@@ -2004,12 +2006,27 @@ def env_file_pairs(path):   # an environment file's switches (one KEY=VALUE per 
     return out
 
 
-def build_env_file(work, env_file, motion):
+OLDER_IPHONE_SIZES = ('64', '128', '256', '512', '1024', 'full')
+
+
+def older_iphone_pairs(size):
+    """The switches OLDER_IPHONE / --older-iphone builds in. A GPU before the A17 Pro cannot sample BC textures, so the host decodes them on the CPU at 2 to 8 times the size of their blocks;
+    these make room under iOS's per-process memory limit: handheld mode, the heap pages the game cleared given back, a decoded texture's blocks given back, and its finest levels left out
+    above `size` texels (none with 'full'). 128 fits a 4 GB iPhone (Mario Kart 8 Deluxe 3.0.5, a whole Grand Prix on an iPhone 13 mini); a larger size for a 6 GB one is untested"""
+    pairs = {'DM_OPMODE': '0'}
+    if size != 'full': pairs['DM_BC_MAX_SIZE'] = size
+    pairs.update({'DM_ZERO_PAGES': '10', 'DM_BC_FREE_BLOCKS': '1'})
+    return pairs
+
+
+def build_env_file(work, env_file, motion, older=''):
     """The environment file the build bakes in (the iOS app's bundled dm/env.txt, the Mac app's, the Mac run command's switches): the --env-file / DM_ENV_FILE one as it is, or, for a build
-    without motion (MOTION / --no-motion), its switches plus DM_MOTION=0 in <id>_build/build_env.txt"""
-    if motion: return env_file
-    pairs = env_file_pairs(env_file) if env_file else {}
-    pairs['DM_MOTION'] = '0'
+    without motion (MOTION / --no-motion) or for an older iPhone (OLDER_IPHONE / --older-iphone), the older iPhone's switches (older_iphone_pairs), then the file's (which win), plus DM_MOTION=0,
+    in <id>_build/build_env.txt"""
+    if motion and not older: return env_file
+    pairs = older_iphone_pairs(older) if older else {}
+    pairs.update(env_file_pairs(env_file) if env_file else {})
+    if not motion: pairs['DM_MOTION'] = '0'
     f = work / 'build_env.txt'
     f.write_text(''.join(f'{k}={v}\n' for k, v in pairs.items()))
     return str(f)
@@ -2169,6 +2186,9 @@ def parse_args(argv):
                     'With --platform mac-app: the Mac app\'s archive, by default for this Mac\'s GPU (none: the app builds the bases on its first start)')
     ap.add_argument('--show-fps', action=argparse.BooleanOptionalAction, help='show the game\'s frame rate on the iPhone, frames on screen per second at the top left (default: the SHOW_FPS setting, on)')
     ap.add_argument('--motion', action=argparse.BooleanOptionalAction, help='pass a gyro controller\'s motion (on iOS also the phone\'s own) to games that read it; --no-motion builds with DM_MOTION=0, for when motion misbehaves (default: the MOTION setting, on)')
+    ap.add_argument('--older-iphone', nargs='?', const='128', choices=OLDER_IPHONE_SIZES, metavar='TEXTURE_SIZE',
+                    help='an iPhone before the iPhone 15 Pro, which decodes the games\' textures on the CPU: builds in the switches that fit a game in its memory. Alone: a 4 GB iPhone (texture size 128); '
+                         'a larger size (256, 512, 1024) or full keeps more texture detail for a 6 GB iPhone (untested) (default: the OLDER_IPHONE setting, none)')
     ap.add_argument('--survey-only', action='store_true', help='a game with no profile: only the survey, no provisional profile and no IPA')
     ap.add_argument('--allow-damaged', action='store_true', help='a damaged NSP (files failing the NCA hash check): write them as read and go on instead of stopping')
     ap.add_argument('--allow-shader-regressions', action='store_true', help='shaders that translated in the game\'s previous build and fail with the current translation chain: '
@@ -2249,6 +2269,8 @@ def main(args=None):
     prepare_xcode = args.prepare_xcode or PREPARE_XCODE
     platform = args.platform or PLATFORM
     if platform not in ('ios', 'mac', 'mac-app'): raise BuildError(f'PLATFORM / --platform must be ios, mac or mac-app: {platform}')
+    older = OLDER_IPHONE if args.older_iphone is None else args.older_iphone
+    if older and older not in OLDER_IPHONE_SIZES: raise BuildError(f'OLDER_IPHONE / --older-iphone must be empty or one of {", ".join(OLDER_IPHONE_SIZES)}: {older}')
     mac = platform in ('mac', 'mac-app')   # the Mac's shaders and host only: no iOS shaders, Xcode project or IPA (mac_run prints the command; mac-app packs a Mac app, mac_app)
     mac_pack = platform == 'mac-app'
     if args.mac_sign and not mac_pack: raise BuildError('--mac-sign signs the Mac app: it needs --platform mac-app')
@@ -2452,8 +2474,9 @@ def main(args=None):
         ios = build_shaders(py, repo, sh, xlate, env, logs, g, pkey, mac)
     icon = next((d / 'icon.jpg' for d in (game, base) if (d / 'icon.jpg').exists()), None)   # the game icon nx_extract saved from the control data (English, icon.jpg); the packed version's first, then the base game's
     motion = MOTION if args.motion is None else args.motion
-    env_file = build_env_file(work, args.env_file or DM_ENV_FILE, motion)
+    env_file = build_env_file(work, args.env_file or DM_ENV_FILE, motion, older)
     if not motion: say('motion (gyro): off, DM_MOTION=0 is built in (on the iPhone, DM_MOTION=1 in the app\'s Documents/env.txt turns it back on)')
+    if older: say(f'older iPhone: texture size {older}, {" ".join(f"{k}={v}" for k, v in older_iphone_pairs(older).items())} built in (a line in the app\'s Documents/env.txt overrides one)')
     if mac_pack:   # a Mac app: the Mac host, then the app packed from it and the build's files
         host, font = mac_host(py, repo, work, env, logs, g)
         if not icon: say('[RED] no game icon in the extraction (an older extraction did not save it: delete extract/ and run again); the app\'s icon will be blank')

@@ -6,24 +6,31 @@ It is not an emulator: the game's own code runs directly on the Apple chip, with
 
 ## This fork: iPhones before the iPhone 15 Pro
 
-This is a fork of [nxnative](https://github.com/seedds/nxnative) for iPhones whose GPU can't read the games' BC-compressed textures (every chip before the A17 Pro). It unpacks those textures on the CPU instead (v0lumehi's [pull request #488](https://github.com/seedds/nxnative/pull/488)), which makes them 2 to 8 times bigger, and adds switches that make a game fit the memory iOS gives an app on a 4 GB iPhone (iPhone 12, 12 mini, 13, 13 mini, SE 3rd generation).
+This is a fork of [nxnative](https://github.com/seedds/nxnative) for iPhones whose GPU can't read the games' BC-compressed textures (every chip before the A17 Pro). It unpacks those textures on the CPU instead (v0lumehi's [pull request #488](https://github.com/seedds/nxnative/pull/488)), which makes them 2 to 8 times bigger, and adds switches that make a game fit the memory iOS gives an app.
 
-**Tested:** Mario Kart 8 Deluxe 3.0.5 on an iPhone 13 mini with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
+**Tested:** Mario Kart 8 Deluxe 3.0.5 on an iPhone 13 mini (4 GB) with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
 
-**How:** follow [Build from the command line](#build-from-the-command-line) below, and add the switches file to the build command:
+**How:** follow [Build from the command line](#build-from-the-command-line) below, and add `--older-iphone` at the end of the build command. On its own it builds for a 4 GB iPhone:
 
 ```
-python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --env-file scripts/iphone-4gb.env
+python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --older-iphone
 ```
 
-Then [install](#install) the IPA as usual, with **Increased Memory Limit** turned on: on a 4 GB iPhone the game does not fit without it.
+A number after it sets the texture size, the largest a texture is kept, in pixels. Bigger is sharper and needs more memory:
+
+| Your iPhone | Add | |
+|---|---|---|
+| 4 GB: iPhone 12, 12 mini, 13, 13 mini, SE (3rd generation) | `--older-iphone` | tested (texture size 128) |
+| 6 GB: iPhone 12 Pro / Pro Max, 13 Pro / Pro Max, 14, 14 Plus, 14 Pro / Pro Max, 15, 15 Plus | `--older-iphone 512` | untested: if the game closes while loading, try `256` |
+
+The sizes are `64`, `128`, `256`, `512`, `1024` and `full` (no limit). Then [install](#install) the IPA as usual, with **Increased Memory Limit** turned on: on these iPhones the game does not fit without it.
 
 **What to expect:**
 
-- Blurrier textures: the finest detail of large textures is left out (`DM_BC_MAX_SIZE=128`).
+- Blurrier textures: the finest detail of large textures is left out, more so at a smaller size.
 - Handheld mode (`DM_OPMODE=0`): the settings screen shows it greyed out.
 - Slower loading, as every texture is unpacked on the CPU.
-- Little room to spare: about 120 MB at the fullest moment of a race's load. If a game is still closed while loading, a lower `DM_BC_MAX_SIZE` in `Documents/env.txt` on the phone leaves more room, at a blurrier picture ([Settings in a file](docs/settings.md#settings-in-a-file)).
+- Little room to spare: on a 4 GB iPhone about 120 MB at the fullest moment of a race's load. To try another size without building again, put a line such as `DM_BC_MAX_SIZE=256` in `Documents/env.txt` on the phone ([Settings in a file](docs/settings.md#settings-in-a-file)); `DM_BC_MAX_SIZE=0` is full.
 
 How it works: [BC textures on a GPU that cannot sample them](docs/reference/rendering.md#bc-textures-on-a-gpu-that-cannot-sample-them).
 
