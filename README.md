@@ -4,6 +4,31 @@ Play your own Nintendo Switch games natively on iPhone and iPad. Bring your game
 
 It is not an emulator: the game's own code runs directly on the Apple chip, with Switch graphics rebuilt on Metal. Nothing from any game is in this repository, and the project is not affiliated with Nintendo or any game publisher.
 
+## This fork: iPhones before the iPhone 15 Pro
+
+This is a fork of [nxnative](https://github.com/seedds/nxnative) for iPhones whose GPU can't read the games' BC-compressed textures (every chip before the A17 Pro). It unpacks those textures on the CPU instead (v0lumehi's [pull request #488](https://github.com/seedds/nxnative/pull/488)), which makes them 2 to 8 times bigger, and adds switches that make a game fit the memory iOS gives an app on a 4 GB iPhone (iPhone 12, 12 mini, 13, 13 mini, SE 3rd generation).
+
+**Tested:** Mario Kart 8 Deluxe 3.0.5 on an iPhone 13 mini with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
+
+**How:** follow [Build from the command line](#build-from-the-command-line) below, and add the switches file to the build command:
+
+```
+python3 scripts/build_ipa_from_nsp.py ~/Games/MarioKart8 -k ~/keys/prod.keys --env-file scripts/iphone-4gb.env
+```
+
+Then [install](#install) the IPA as usual, with **Increased Memory Limit** turned on: on a 4 GB iPhone the game does not fit without it.
+
+**What to expect:**
+
+- Blurrier textures: the finest detail of large textures is left out (`DM_BC_MAX_SIZE=128`).
+- Handheld mode (`DM_OPMODE=0`): the settings screen shows it greyed out.
+- Slower loading, as every texture is unpacked on the CPU.
+- Little room to spare: about 120 MB at the fullest moment of a race's load. If a game is still closed while loading, a lower `DM_BC_MAX_SIZE` in `Documents/env.txt` on the phone leaves more room, at a blurrier picture ([Settings in a file](docs/settings.md#settings-in-a-file)).
+
+How it works: [BC textures on a GPU that cannot sample them](docs/reference/rendering.md#bc-textures-on-a-gpu-that-cannot-sample-them).
+
+Never share the IPA you build: it holds the game's own code and files. Everyone builds their own, from their own game.
+
 ## How to play
 
 ### With a Mac app
@@ -25,7 +50,7 @@ The shaders are built with Xcode 27.1's Metal compiler, so take 27.1 from Apple'
 
 ```
 xcodebuild -downloadComponent MetalToolchain
-git clone https://github.com/seedds/nxnative.git && cd nxnative
+git clone https://github.com/sys-skye/nxnative.git && cd nxnative
 brew install xcodegen zstd glslang
 brew install --cask dotnet-sdk
 python3 -m pip install lz4 "capstone>=5,<6" fonttools nsz zbic "backports.zstd; python_version < '3.14'"
@@ -61,7 +86,7 @@ Controls, saves and settings: [Playing](docs/playing.md).
 
 Games tested on Mac or iPhone. See the [per-game notes](dm/games/README.md#games) for tested platforms, progress and known issues:
 
-Needs iOS / iPadOS 26 or later on an iPhone 15 Pro or newer (A17 Pro chip or later) or an iPad with an M1 chip or later: the games' textures are BC-compressed, and older iPhones can't read that format. Other games aren't supported yet. For them the script writes a survey and still tries its best to pack an IPA, guessing the game's settings; such an IPA may not start.
+Needs iOS / iPadOS 26 or later. An iPhone 15 Pro or newer (A17 Pro chip or later) or an iPad with an M1 chip or later reads the games' BC-compressed textures as they are; older iPhones unpack them on the CPU, which needs more memory ([this fork](#this-fork-iphones-before-the-iphone-15-pro)). Other games aren't supported yet. For them the script writes a survey and still tries its best to pack an IPA, guessing the game's settings; such an IPA may not start.
 
 Under a game, "60 fps with 1.2.0" means it runs at 60 fps (30 on the Switch) with that update.
 
