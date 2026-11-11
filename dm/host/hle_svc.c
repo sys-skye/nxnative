@@ -39,7 +39,7 @@ int dm_guest_as_contains(uintptr_t a) { uintptr_t b = (uintptr_t)g_as; return g_
 
 static void *alias_windows_thread(void *arg);
 static void *regions_thread(void *arg);
-// DM_ZERO_PAGES=<seconds>: heap pages holding only zeros go back to the system at that interval. Games clear their heap at boot: Mario Kart 8 Deluxe 3.0.5 has touched 1,482 MiB of its heap
+// DM_ZERO_PAGES=<seconds>: heap pages holding only zeros go back to the system at that interval. Games clear their heap at boot: Mario Kart 8 Deluxe 4.0.1 has touched 1,482 MiB of its heap
 // 30 s in, 898 MiB of it still all zeros (820 MiB in a race), and iOS's memory limit charges those like any others. A pass first finds runs of such pages while the game runs, a chunk at a time
 // under g_map_lock (no SetHeapSize takes a page's access away while it is read). Then, a batch of at most ZP_BATCH bytes of those runs at a time, it stops every other thread, reads each page
 // again, and replaces the runs still blank with new zero-fill mappings: a store already made is visible once its thread has stopped, so a later read or write sees what it would have seen.

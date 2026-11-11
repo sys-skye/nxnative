@@ -8,7 +8,7 @@ It is not an emulator: the game's own code runs directly on the Apple chip, with
 
 This is a fork of [nxnative](https://github.com/seedds/nxnative) for iPhones whose GPU can't read the games' BC-compressed textures (every chip before the A17 Pro). It unpacks those textures on the CPU instead (v0lumehi's [pull request #488](https://github.com/seedds/nxnative/pull/488)), which makes them 2 to 8 times bigger, and adds switches that make a game fit the memory iOS gives an app.
 
-**Tested:** Mario Kart 8 Deluxe 3.0.5 on an iPhone 13 mini (4 GB) with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
+**Tested:** Mario Kart 8 Deluxe 4.0.1 on an iPhone 13 mini (4 GB) with iOS 27: a whole Grand Prix, with no crash and no audio crackle. Other games, other phones and the Booster Course Pass courses are untested.
 
 **How:** follow [Build from the command line](#build-from-the-command-line) below, and add your iPhone's memory to the build command, for example `--4gb`:
 

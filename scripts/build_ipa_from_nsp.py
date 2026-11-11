@@ -2012,7 +2012,7 @@ OLDER_IPHONE_SIZES = ('64', '128', '256', '512', '1024', 'full')
 def older_iphone_pairs(size):
     """The switches OLDER_IPHONE / --older-iphone builds in. A GPU before the A17 Pro cannot sample BC textures, so the host decodes them on the CPU at 2 to 8 times the size of their blocks;
     these make room under iOS's per-process memory limit: handheld mode, the heap pages the game cleared given back, a decoded texture's blocks given back, and its finest levels left out
-    above `size` texels (none with 'full'). 128 fits a 4 GB iPhone (Mario Kart 8 Deluxe 3.0.5, a whole Grand Prix on an iPhone 13 mini); a larger size for a 6 GB one is untested"""
+    above `size` texels (none with 'full'). 128 fits a 4 GB iPhone (Mario Kart 8 Deluxe 4.0.1, a whole Grand Prix on an iPhone 13 mini); a larger size for a 6 GB one is untested"""
     pairs = {'DM_OPMODE': '0'}
     if size != 'full': pairs['DM_BC_MAX_SIZE'] = size
     pairs.update({'DM_ZERO_PAGES': '10', 'DM_BC_FREE_BLOCKS': '1'})
